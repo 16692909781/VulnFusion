@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VulnFusion · AI + 人工漏洞挖掘</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background:#0f172a; color:#e2e8f0; }
+    header { padding:20px 28px; border-bottom:1px solid #334155; display:flex; justify-content:space-between; gap:20px; align-items:center; }
+    main { padding:24px 28px; max-width:1280px; margin:auto; }
+    .panel { background:#111c33; border:1px solid #334155; border-radius:12px; padding:18px; margin-bottom:18px; }
+    input, button, select { background:#0b1222; color:#e2e8f0; border:1px solid #475569; border-radius:7px; padding:8px 10px; }
+    input[type=checkbox] { accent-color:#38bdf8; }
+    button { cursor:pointer; background:#2563eb; border:0; } button.secondary { background:#475569; } button.danger { background:#be123c; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; }
+    .skill { border:1px solid #334155; border-radius:8px; padding:10px; background:#0b1222; }
+    .skill label { display:flex; gap:8px; align-items:flex-start; cursor:pointer; }
+    .task { border-top:1px solid #334155; padding:14px 0; }
+    .badge { padding:2px 7px; border-radius:999px; background:#7c3aed; font-size:12px; }
+    .ok { color:#4ade80; } .warn { color:#fbbf24; } .bad { color:#fb7185; }
+    pre { white-space:pre-wrap; background:#0b1222; padding:10px; border-radius:7px; overflow:auto; }
+    small { color:#94a3b8; } h2 { margin-top:0; }
+  </style>
+</head>
+<body>
+  <header><strong>VulnFusion</strong><span><small>Skill 编排 · Kali 执行 · 人工审批 · Evidence</small> <span id="kaliBadge" class="badge">Kali 检查中</span></span></header>
+  <main>
+    <section class="panel">
+      <div class="row"><h2 style="margin:0">Kali 执行环境</h2><button id="checkKali" onclick="checkKali()">检查连接和工具</button></div>
+      <p id="kaliDetails" role="status" aria-live="polite"><small>点击检查，验证免密登录、工具安装和工作目录。</small></p>
+    </section>
+    <section class="panel">
+      <h2>创建授权项目</h2>
+      <div class="row"><input id="name" placeholder="项目名称" value="demo" /><input id="root" size="52" placeholder="源码目录绝对路径" value="C:\\Users\\Administrator\\Desktop\\VulnFusion\\examples" /><input id="scope" size="42" placeholder="授权目标（逗号分隔，可选）" /><button onclick="createProject()">创建项目</button></div>
+      <p id="projectInfo"><small>必须明确标记为授权项目；控制端不会在本机执行扫描器。</small></p>
+    </section>
+
+    <section class="panel">
+      <h2>AI Agent 运行计划</h2>
+      <div class="row">
+        <select id="mode"><option value="full">完整 Web 审计</option><option value="runtime_plan">侦察与运行时</option><option value="code_audit">源码与 API 分析</option></select>
+        <input id="target" size="52" placeholder="授权目标，例如 https://authorized.example" />
+      </div>
+      <div class="row" style="margin-top:10px"><label><input id="dryRun" type="checkbox" checked /> dry-run（只预览，不发包）</label><label><input id="executeRemote" type="checkbox" /> 允许批准后通过 Kali 执行</label><button onclick="runAudit()">生成 Skill 任务</button><button class="secondary" onclick="refresh()">刷新</button><button class="secondary" onclick="downloadReport()">生成报告预览</button></div>
+      <p><small>即使勾选远程执行，每个工具任务仍需人工逐个批准。目标、命令和授权范围请在批准前复核。</small></p>
+      <div id="skills" class="grid"><small>正在加载 Skill Registry…</small></div>
+    </section>
+
+    <section class="panel"><h2>任务队列与远程命令</h2><div id="tasks"><small>请先创建项目。</small></div></section>
+    <section class="panel"><h2>漏洞候选</h2><div id="findings"><small>源码扫描结果和人工确认会显示在这里。</small></div></section>
+  </main>
+<script>
+let project = null;
+let allSkills = [];
+let lastKaliCheck = null;
+const api = p => fetch('/api' + p);
+const json = async (res) => { const data = await res.json(); if (!res.ok) throw new Error(data.detail || '请求失败'); return data; };
+async function boot() {
+  try { allSkills = await json(await api('/skills')); renderSkills(); } catch (e) { document.querySelector('#skills').textContent = e.message; }
+  await refreshKali();
+}
+function renderSkills() {
+  const selected = new Set(['recon-technology-identification','analysis-javascript','analysis-api','vulnerabilities-injection-triage','vulnerabilities-web-triage','verification-evidence','reporting-security']);
+  document.querySelector('#skills').innerHTML = allSkills.map(s => `<div class="skill"><label><input type="checkbox" data-skill="${escapeHtml(s.id)}" ${selected.has(s.id)?'checked':''}/><span><strong>${escapeHtml(s.name)}</strong><br><small>${escapeHtml(s.category)} · ${escapeHtml(s.description)}<br>工具：${escapeHtml((s.tools||[]).join(', ') || '本地 Agent')}</small></span></label></div>`).join('');
+}
+async function createProject() {
+  try { const targets = document.querySelector('#scope').value.split(',').map(x=>x.trim()).filter(Boolean); project = await json(await fetch('/api/projects', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:document.querySelector('#name').value, root_path:document.querySelector('#root').value, targets, authorized:true})})); document.querySelector('#projectInfo').innerHTML = `<span class="ok">项目 ${escapeHtml(project.name)} 已创建：${escapeHtml(project.id)} · 范围：${escapeHtml(targets.join(', ') || '运行时逐次确认')}</span>`; await refresh(); }
+  catch (e) { alert(e.message); }
+}
+async function runAudit() {
+  if (!project) return alert('请先创建项目');
+  const skill_ids = [...document.querySelectorAll('[data-skill]:checked')].map(x => x.dataset.skill);
+  try { await json(await fetch(`/api/projects/${project.id}/runs`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:document.querySelector('#mode').value, target:document.querySelector('#target').value.trim(), dry_run:document.querySelector('#dryRun').checked, execute_remote:document.querySelector('#executeRemote').checked, skill_ids})})); await refresh(); }
+  catch (e) { alert(e.message); }
+}
+async function decideTask(id, decision) {
+  const note = decision === 'approve' ? '已人工复核授权范围、Skill 和 Kali 命令' : '人工拒绝该任务';
+  try { await json(await fetch(`/api/tasks/${id}/decision`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({decision, note})})); await refresh(); }
+  catch (e) { alert(e.message); }
+}
+async function decideFinding(id, status) {
+  try { await json(await fetch(`/api/findings/${id}/decision`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status, note:'由 VulnFusion 人工复核台提交'})})); await refresh(); }
+  catch (e) { alert(e.message); }
+}
+async function downloadReport() {
+  if (!project) return alert('请先创建项目');
+  try { const data = await json(await api(`/projects/${project.id}/report`)); const blob = new Blob([data.markdown], {type:'text/markdown;charset=utf-8'}); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `vulnfusion-${project.id}.md`; link.click(); URL.revokeObjectURL(link.href); } catch (e) { alert(e.message); }
+}
+async function refreshKali() {
+  try { const k = await json(await api('/kali/status')); if (lastKaliCheck && lastKaliCheck.host === k.host && lastKaliCheck.port === k.port) return; const el = document.querySelector('#kaliBadge'); el.textContent = k.configured ? `Kali ${k.host}:${k.port} · 待检查` : 'Kali 未配置'; el.className = 'badge warn'; }
+  catch (e) { document.querySelector('#kaliBadge').textContent = 'Kali 状态未知'; }
+}
+async function checkKali() {
+  const button = document.querySelector('#checkKali');
+  const details = document.querySelector('#kaliDetails');
+  const badge = document.querySelector('#kaliBadge');
+  button.disabled = true; button.textContent = '正在检查…';
+  details.textContent = '正在验证 SSH 登录和远程工具，请稍候。';
+  try {
+    const k = await json(await fetch('/api/kali/check', {method:'POST'}));
+    lastKaliCheck = k;
+    badge.textContent = k.ready ? 'Kali 就绪' : k.connected ? 'Kali 已连接 · 环境待补全' : 'Kali 连接失败';
+    badge.className = `badge ${k.ready ? 'ok' : k.connected ? 'warn' : 'bad'}`;
+    const checkedAt = new Date(k.checked_at).toLocaleString();
+    if (!k.connected) { details.textContent = `${checkedAt}：${k.error || '无法连接，请确认 Kali 已开机且 SSH 可用。'}`; return; }
+    const missing = [...(k.missing_tools || [])];
+    if (!k.wordlist_available) missing.push('SecLists 目录字典');
+    if (!k.httpx_valid) missing.push('ProjectDiscovery httpx 配置');
+    if (!k.workspace_writable) missing.push('可写工作目录');
+    if (k.system !== 'Linux') missing.push('Linux 执行环境');
+    const installed = Object.entries(k.tools).filter(([,path]) => path).map(([name]) => name).join('、');
+    details.textContent = `${checkedAt}：已连接 ${k.user}@${k.host}。${missing.length ? '待补全：' + missing.join('、') + '。' : '工具、字典和工作目录均已就绪。'} 已发现工具：${installed}。`;
+  } catch (e) {
+    lastKaliCheck = null; badge.textContent = 'Kali 检查失败'; badge.className = 'badge bad'; details.textContent = e.message;
+  } finally { button.disabled = false; button.textContent = '重新检查连接和工具'; }
+}
+async function refresh() {
+  await refreshKali(); if (!project) return;
+  try { const [f,t] = await Promise.all([api(`/projects/${project.id}/findings`), api(`/projects/${project.id}/tasks`)]); renderFindings(await json(f)); renderTasks(await json(t)); }
+  catch (e) { document.querySelector('#tasks').textContent = e.message; }
+}
+function renderTasks(items) {
+  const el = document.querySelector('#tasks'); if (!items.length) { el.innerHTML='<small>暂无任务。</small>'; return; }
+  el.innerHTML = items.map(x => { const canDecide = x.status === 'waiting_approval'; const result = x.result && Object.keys(x.result).length ? `<pre>${escapeHtml(JSON.stringify(x.result,null,2))}</pre>` : ''; return `<div class="task"><div><span class="badge">${escapeHtml(x.status)}</span> <strong>${escapeHtml(x.title)}</strong></div><small>阶段：${escapeHtml(x.kind)} · Skill：${escapeHtml(x.skill_id)} · 工具：${escapeHtml(x.remote_tool||'本地 Agent')} · 可选工具：${escapeHtml((x.available_tools||[]).join(', ') || '无')}</small>${x.remote_command?`<p><small>将在 Kali 执行的命令预览：</small></p><pre>${escapeHtml(x.remote_command)}</pre>`:''}<div class="row">${canDecide?`<button onclick="decideTask('${escapeHtml(x.id)}','approve')">批准${x.payload && x.payload.dry_run ? '预览' : '执行'}</button><button class="danger" onclick="decideTask('${escapeHtml(x.id)}','reject')">拒绝</button>`:''}${x.status==='waiting_kali'?'<small class="warn">Kali 未配置，任务暂不能批准执行。</small>':''}</div>${result}</div>`; }).join('');
+}
+function renderFindings(items) { const el=document.querySelector('#findings'); if(!items.length){el.innerHTML='<small>暂无源码候选；运行 code_audit 或 full 后查看。</small>';return;} el.innerHTML=items.map(x=>`<div class="task"><div><span class="badge">${escapeHtml(x.severity)}</span> <strong>${escapeHtml(x.title)}</strong> <small>${escapeHtml(x.status)} · confidence ${escapeHtml(x.confidence)}</small></div><p>${escapeHtml(x.description)}</p><small>${escapeHtml(x.file_path)}:${escapeHtml(x.line_start||'')} · evidence: ${escapeHtml((x.evidence_ids||[]).join(', '))}</small><pre>${escapeHtml(x.code_snippet)}</pre><div class="row"><button onclick="decideFinding('${escapeHtml(x.id)}','confirmed')">确认漏洞</button><button class="secondary" onclick="decideFinding('${escapeHtml(x.id)}','likely')">可能存在</button><button class="secondary" onclick="decideFinding('${escapeHtml(x.id)}','false_positive')">误报</button></div></div>`).join(''); }
+function escapeHtml(s){return String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+data/*.json
+data/*.log
+.env
+data/*.lock
+data/*.tmp
+agent/configs/*
+!agent/configs/*.example.*
+.mcp.json
+.codex/

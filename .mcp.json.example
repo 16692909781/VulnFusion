@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "vulnfusion": {
+      "command": "C:\\path\\to\\VulnFusion\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-u",
+        "C:\\path\\to\\VulnFusion\\agent\\mcp_server.py"
+      ],
+      "env": { "PYTHONUTF8": "1" }
+    }
+  }
+}

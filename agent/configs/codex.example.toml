@@ -1,0 +1,9 @@
+# Copy or regenerate this project-scoped entry with agent/configure.py.
+[mcp_servers.vulnfusion]
+command = "C:\\path\\to\\VulnFusion\\.venv\\Scripts\\python.exe"
+args = ["-u", "C:\\path\\to\\VulnFusion\\agent\\mcp_server.py"]
+startup_timeout_sec = 30
+tool_timeout_sec = 1200
+
+[mcp_servers.vulnfusion.env]
+PYTHONUTF8 = "1"

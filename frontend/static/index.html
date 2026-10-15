@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VulnFusion</title>
+  <style>
+    body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background:#0f172a; color:#e2e8f0; }
+    header { padding:20px 28px; border-bottom:1px solid #334155; display:flex; justify-content:space-between; }
+    main { padding:24px 28px; max-width:1200px; margin:auto; }
+    .panel { background:#111c33; border:1px solid #334155; border-radius:12px; padding:18px; margin-bottom:18px; }
+    input, button, select { background:#0b1222; color:#e2e8f0; border:1px solid #475569; border-radius:7px; padding:8px 10px; }
+    button { cursor:pointer; background:#2563eb; border:0; } button.secondary { background:#475569; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .finding { border-top:1px solid #334155; padding:14px 0; }
+    .badge { padding:2px 7px; border-radius:999px; background:#7c3aed; font-size:12px; }
+    pre { white-space:pre-wrap; background:#0b1222; padding:10px; border-radius:7px; overflow:auto; }
+    small { color:#94a3b8; }
+  </style>
+</head>
+<body>
+  <header><strong>VulnFusion</strong><small>AI 提议 · 人工决策 · 证据可追溯</small></header>
+  <main>
+    <section class="panel">
+      <h2>创建授权项目</h2>
+      <div class="row"><input id="name" placeholder="项目名称" value="demo" /><input id="root" size="65" placeholder="源码目录绝对路径" value="C:\\Users\\Administrator\\Desktop\\VulnFusion\\examples" /><button onclick="createProject()">创建</button></div>
+      <p id="projectInfo"><small>请明确填写授权项目。MVP 的运行时探测默认只生成审批任务。</small></p>
+    </section>
+    <section class="panel">
+      <div class="row"><h2 style="margin-right:auto">漏洞候选</h2><button class="secondary" onclick="refresh()">刷新</button><button onclick="runAudit()">运行源码审计</button></div>
+      <div id="findings"><small>尚未加载项目。</small></div>
+    </section>
+    <section class="panel"><h2>人工分诊</h2><div id="tasks"><small>任务队列会显示在这里。</small></div></section>
+  </main>
+<script>
+let project = null;
+const api = p => fetch('/api' + p);
+async function createProject() {
+  const res = await fetch('/api/projects', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:document.querySelector('#name').value, root_path:document.querySelector('#root').value, authorized:true})});
+  const data = await res.json(); if (!res.ok) return alert(data.detail || '创建失败');
+  project = data; document.querySelector('#projectInfo').textContent = `项目 ${data.name} 已创建：${data.id}`; refresh();
+}
+async function runAudit() { if (!project) return alert('请先创建项目'); await fetch(`/api/projects/${project.id}/runs`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'full',dry_run:true})}); refresh(); }
+async function decide(id, status) { await fetch(`/api/findings/${id}/decision`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status, note:'由人工分诊台提交'})}); refresh(); }
+async function refresh() { if (!project) return; const [f,t] = await Promise.all([api(`/projects/${project.id}/findings`), api(`/projects/${project.id}/tasks`)]); renderFindings(await f.json()); renderTasks(await t.json()); }
+function renderFindings(items) { const el=document.querySelector('#findings'); if(!items.length){el.innerHTML='<small>暂无候选。</small>';return;} el.innerHTML=items.map(x=>`<div class="finding"><div><span class="badge">${x.severity}</span> <strong>${x.title}</strong> <small>${x.status} · confidence ${x.confidence}</small></div><p>${x.description}</p><small>${x.file_path}:${x.line_start||''} · evidence: ${x.evidence_ids.join(', ')}</small><pre>${escapeHtml(x.code_snippet)}</pre><div class="row"><button onclick="decide('${x.id}','confirmed')">确认</button><button class="secondary" onclick="decide('${x.id}','false_positive')">误报</button><button class="secondary" onclick="decide('${x.id}','likely')">可能存在</button></div></div>`).join(''); }
+function renderTasks(items) { document.querySelector('#tasks').innerHTML = items.length ? items.map(x=>`<div class="finding"><strong>${x.title}</strong><br><small>${x.kind} · ${x.status}</small><pre>${escapeHtml(JSON.stringify(x.payload||{},null,2))}</pre></div>`).join('') : '<small>暂无任务。</small>'; }
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
+</script>
+</body>
+</html>

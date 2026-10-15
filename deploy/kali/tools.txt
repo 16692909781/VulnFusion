@@ -1,0 +1,12 @@
+# Core tools used by the VulnFusion Skill pack.
+nmap
+httpx-toolkit
+whatweb
+ffuf
+subfinder
+nikto
+nuclei
+semgrep
+gitleaks
+sqlmap
+seclists
